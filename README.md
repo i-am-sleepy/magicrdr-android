@@ -1,0 +1,1 @@
+# magicrdr-android
