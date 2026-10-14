@@ -1,0 +1,77 @@
+name: Build APK from zip
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get the repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract the zip in the repo root
+        run: |
+          ZIP="$(find . -maxdepth 1 -type f -iname '*.zip' | sort | head -n 1)"
+          if [ -z "$ZIP" ]; then
+            echo "::error::No .zip file found in the root of the repository. Upload the project zip, then run again."
+            exit 1
+          fi
+          echo "Using zip: $ZIP"
+          unzip -q -o "$ZIP" -d .
+          SETTINGS="$(find . -type f -name 'settings.gradle' -not -path './.git/*' | awk '{print length, $0}' | sort -n | head -n 1 | cut -d' ' -f2-)"
+          if [ -z "$SETTINGS" ]; then
+            echo "::error::Could not find settings.gradle inside the zip. Is this the right zip?"
+            exit 1
+          fi
+          PROJECT_DIR="$(dirname "$SETTINGS")"
+          echo "Project folder: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Build the APK
+        run: |
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Collect the APK
+        run: |
+          APK="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -name '*.apk' | head -n 1)"
+          if [ -z "$APK" ]; then
+            echo "::error::The build finished but no APK was found."
+            exit 1
+          fi
+          cp "$APK" RpfEditor.apk
+          ls -l RpfEditor.apk
+
+      - name: Save the APK as a download (Actions page)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RPF-Editor-APK
+          path: RpfEditor.apk
+
+      - name: Publish the APK as a Release (direct download, no unzipping)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "apk-${{ github.run_number }}" RpfEditor.apk \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "RPF Editor APK (build ${{ github.run_number }})" \
+            --notes "Tap RpfEditor.apk below to download it, then open it on your phone to install."
